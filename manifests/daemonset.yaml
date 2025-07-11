@@ -16,11 +16,13 @@ spec:
       containers:
       - name: log-backup
         image: evertonagilar/k8slogbck:latest
-        imagePullPolicy: IfNotPresent
-        # imagePullPolicy: Always
+        # imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         env:
         - name: BACKUP_PATTERN
           value: "dev-*,prod-*,d-*,h-*,p-*"
+        - name: REMOVE_AFTER_COPY
+          value: "false" # "true" apagar log após arquivado
         volumeMounts:
         - name: log-path
           mountPath: /var/log/pods

@@ -12,14 +12,16 @@ import (
 	v1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
 var (
-	logBase     = "/var/log/pods"
-	backupPath  = "/backup"
-	patternList = []string{}
+	logBase         = "/var/log/pods"
+	backupPath      = "/backup"
+	patternList     = []string{}
+	removeAfterCopy = false
 )
 
 const version = "1.0.0"
@@ -31,11 +33,18 @@ func main() {
 		patternList = strings.Split(env, ",")
 		logInfo("🧭 BACKUP_PATTERN definido: %v", patternList)
 	} else {
-		logWarn("🔄 BACKUP_PATTERN não definido. Usando wildcard '*' para todos os namespaces.")
+		logWarn("🔄 BACKUP_PATTERN não definido. Usando '*'")
 		patternList = []string{"*"}
 	}
 
-	logInfo("🚀 Iniciando monitoramento de pods e arquivamento de logs...")
+	if env := os.Getenv("REMOVE_AFTER_COPY"); env == "1" || strings.ToLower(env) == "true" {
+		removeAfterCopy = true
+		logInfo("🗑️  REMOVE_AFTER_COPY ativado. Logs serão removidos após o backup.")
+	} else {
+		logInfo("📁 REMOVE_AFTER_COPY desativado. Logs serão preservados.")
+	}
+
+	logInfo("🚀 Iniciando rotina...")
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -48,22 +57,7 @@ func main() {
 
 	go periodicArchive()
 
-	watcher, err := clientset.CoreV1().Pods("").Watch(context.TODO(), meta.ListOptions{
-		FieldSelector: fields.Everything().String(),
-		Watch:         true,
-	})
-	if err != nil {
-		logFatal("❌ Erro ao iniciar watcher de pods: %v", err)
-	}
-
-	for event := range watcher.ResultChan() {
-		if pod, ok := event.Object.(*v1.Pod); ok && pod.ObjectMeta.DeletionTimestamp != nil {
-			if shouldArchive(pod.Namespace) {
-				logInfo("📦 Pod finalizando detectado: %s/%s", pod.Namespace, pod.Name)
-				go archivePodLogs(pod.Namespace, pod.Name)
-			}
-		}
-	}
+	watchPodDeletions(clientset)
 }
 
 func periodicArchive() {
@@ -77,16 +71,24 @@ func periodicArchive() {
 				continue
 			}
 			for _, podDir := range matches {
+				ns, pod := parsePodDir(podDir)
 				err := filepath.Walk(podDir, func(path string, info os.FileInfo, err error) error {
 					if err != nil || info.IsDir() {
 						return nil
 					}
 					if strings.HasSuffix(path, ".gz") && fileOlderThan(path, 60) {
-						dest := filepath.Join(backupPath, filepath.Base(path))
-						logInfo("📦 Arquivando log antigo: %s → %s", path, dest)
-						copyFile(path, dest)
-						os.Remove(path)
-						logInfo("🗑️ Removido original: %s", path)
+						destDir := filepath.Join(backupPath, ns, pod)
+						os.MkdirAll(destDir, 0755)
+
+						dst := filepath.Join(destDir, generateUniqueFilename(path))
+						if !fileExists(dst) {
+							logInfo("📦 Arquivando log antigo: %s → %s", path, dst)
+							copyFile(path, dst)
+							if removeAfterCopy {
+								os.Remove(path)
+								logInfo("🗑️ Removido original: %s", path)
+							}
+						}
 					}
 					return nil
 				})
@@ -96,6 +98,37 @@ func periodicArchive() {
 			}
 		}
 		time.Sleep(1 * time.Minute)
+	}
+}
+
+func watchPodDeletions(clientset *kubernetes.Clientset) {
+	logInfo("🔎 Iniciando watch para eventos de pods...")
+
+	watcher, err := clientset.CoreV1().Pods("").Watch(context.TODO(), meta.ListOptions{
+		FieldSelector: fields.Everything().String(),
+		Watch:         true,
+	})
+	if err != nil {
+		logFatal("❌ Erro ao iniciar watcher de pods: %v", err)
+	}
+
+	for event := range watcher.ResultChan() {
+		logInfo("📡 Evento recebido: %v", event.Type)
+
+		pod, ok := event.Object.(*v1.Pod)
+		if !ok {
+			logWarn("⚠️  Objeto recebido não é um *v1.Pod: %T", event.Object)
+			continue
+		}
+
+		logInfo("🔍 Pod: %s/%s | Phase: %s | DeletionTimestamp: %v", pod.Namespace, pod.Name, pod.Status.Phase, pod.DeletionTimestamp)
+
+		if event.Type == watch.Deleted || pod.ObjectMeta.DeletionTimestamp != nil {
+			if shouldArchive(pod.Namespace) {
+				logInfo("📦 Arquivando logs do pod finalizado: %s/%s", pod.Namespace, pod.Name)
+				go archivePodLogs(pod.Namespace, pod.Name)
+			}
+		}
 	}
 }
 
@@ -114,11 +147,20 @@ func archivePodLogs(namespace, podName string) {
 				return nil
 			}
 			if strings.HasSuffix(path, ".gz") || strings.HasSuffix(path, ".log") {
-				dest := filepath.Join(backupPath, filepath.Base(path))
-				logInfo("📦 Copiando %s → %s", path, dest)
-				copyFile(path, dest)
-				os.Remove(path)
-				logInfo("🗑️ Deletado original: %s", path)
+				destDir := filepath.Join(backupPath, namespace, podName)
+				os.MkdirAll(destDir, 0755)
+
+				dst := filepath.Join(destDir, generateUniqueFilename(path))
+				if !fileExists(dst) {
+					logInfo("📦 Copiando %s → %s", path, dst)
+					copyFile(path, dst)
+					if removeAfterCopy {
+						os.Remove(path)
+						logInfo("🗑️ Deletado original: %s", path)
+					}
+				} else {
+					logInfo("⚠️  Arquivo já existente, ignorado: %s", dst)
+				}
 			}
 			return nil
 		})
@@ -128,16 +170,10 @@ func archivePodLogs(namespace, podName string) {
 	}
 }
 
-func shouldArchive(ns string) bool {
-	if len(patternList) == 1 && patternList[0] == "*" {
-		return true
-	}
-	for _, pattern := range patternList {
-		if pattern == ns {
-			return true
-		}
-	}
-	return false
+func generateUniqueFilename(src string) string {
+	base := filepath.Base(src)
+	timestamp := time.Now().Format("20060102-150405")
+	return fmt.Sprintf("%s-%s", timestamp, base)
 }
 
 func fileOlderThan(path string, ageSec int) bool {
@@ -146,6 +182,11 @@ func fileOlderThan(path string, ageSec int) bool {
 		return false
 	}
 	return time.Since(info.ModTime()) > time.Duration(ageSec)*time.Second
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func copyFile(src, dst string) {
@@ -158,7 +199,7 @@ func copyFile(src, dst string) {
 
 	to, err := os.Create(dst)
 	if err != nil {
-		logError("❌ Erro ao criar arquivo destino %s: %v", dst, err)
+		logError("❌ Erro ao criar destino %s: %v", dst, err)
 		return
 	}
 	defer to.Close()
@@ -174,6 +215,27 @@ func copyFile(src, dst string) {
 		os.Chmod(dst, info.Mode())
 		os.Chtimes(dst, time.Now(), info.ModTime())
 	}
+}
+
+func parsePodDir(podDir string) (namespace, pod string) {
+	parts := strings.Split(filepath.Base(podDir), "_")
+	if len(parts) >= 2 {
+		return parts[0], parts[1]
+	}
+	return "unknown", "unknown"
+}
+
+func shouldArchive(ns string) bool {
+	if len(patternList) == 1 && patternList[0] == "*" {
+		return true
+	}
+	for _, pattern := range patternList {
+		p := strings.TrimRight(pattern, "*")
+		if strings.HasPrefix(ns, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func printHeader() {
