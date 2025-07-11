@@ -46,7 +46,7 @@ Você pode configurar a ferramenta por meio de variáveis de ambiente:
 ### Exemplo de configuração:
 
 ```bash
-BACKUP_PATTERN="dev-,prod-" REMOVE_AFTER_COPY=true ./k8slogbck
+BACKUP_PATTERN="dev-*" REMOVE_AFTER_COPY=true ./k8slogbck
 ```
 
 ## 📦 Requisitos
