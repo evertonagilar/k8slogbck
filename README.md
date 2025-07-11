@@ -75,25 +75,26 @@ spec:
     spec:
       containers:
         - name: k8slogbck
-          image: seu-registro/k8slogbck:latest
+          image: evertonagilar/k8slogbck:1.0.0
           env:
             - name: BACKUP_PATTERN
-              value: "dev-,prod-"
+              value: "p-,prod-"         # qualquer namespace com esses prefixos
             - name: REMOVE_AFTER_COPY
               value: "true"
-          volumeMounts:
-            - name: varlog
-              mountPath: /var/log/pods
-              readOnly: true
-            - name: backup
-              mountPath: /backup
+        volumeMounts:
+          - name: log-path
+        mountPath: /var/log/pods
+          - name: backup-dest
+        mountPath: /backup
       volumes:
-        - name: varlog
+        - name: log-path
           hostPath:
-            path: /var/log/pods
-        - name: backup
+          path: /var/log/pods
+          type: Directory
+        - name: backup-dest
           hostPath:
-            path: /mnt/backup
+          path: /var/log/k8s-log-backup
+          type: DirectoryOrCreate
 ```
 
 ## ✅ Status atual
