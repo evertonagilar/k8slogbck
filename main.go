@@ -106,7 +106,7 @@ func startPodInformer(clientset *kubernetes.Clientset, stopCh <-chan struct{}) {
 
 func periodicArchive() {
 	for {
-		logInfo("⏱️ Iniciando varredura periódica de logs antigos (*.gz)...")
+		logInfo("♻️ Iniciando varredura periódica de logs antigos (*.gz)...")
 		for _, pattern := range patternList {
 			globPath := filepath.Join(logBase, pattern+"_*")
 			matches, err := filepath.Glob(globPath)
