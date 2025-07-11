@@ -40,7 +40,7 @@ Você pode configurar a ferramenta por meio de variáveis de ambiente:
 
 | Variável             | Descrição                                                                 |
 |----------------------|---------------------------------------------------------------------------|
-| `BACKUP_PATTERN`     | Lista de namespaces separados por vírgula para monitoramento (ex: `dev-,prod-`) |
+| `BACKUP_PATTERN`     | Lista de namespaces separados por vírgula para monitoramento (ex: `p-*,prod-*`) |
 | `REMOVE_AFTER_COPY`  | Se definido como `true`, os arquivos originais são apagados após cópia    |
 
 ### Exemplo de configuração:
@@ -78,7 +78,7 @@ spec:
           image: evertonagilar/k8slogbck:1.0.0
           env:
             - name: BACKUP_PATTERN
-              value: "p-,prod-"         # qualquer namespace com esses prefixos
+              value: "p-*,prod-*"         # qualquer namespace com esses prefixos
             - name: REMOVE_AFTER_COPY
               value: "true"
         volumeMounts:
