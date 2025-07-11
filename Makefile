@@ -1,6 +1,6 @@
 # Nome e tag da imagem
 IMAGE_NAME=evertonagilar/k8slogbck
-TAG=latest
+TAG=1.0.0
 
 # Comando para build da imagem
 build:

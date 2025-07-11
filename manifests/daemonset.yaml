@@ -15,9 +15,8 @@ spec:
       serviceAccountName: log-backup-sa
       containers:
       - name: log-backup
-        image: evertonagilar/k8slogbck:latest
-        # imagePullPolicy: IfNotPresent
-        imagePullPolicy: Always
+        image: evertonagilar/k8slogbck:1.0.0
+        imagePullPolicy: IfNotPresent
         env:
         - name: BACKUP_PATTERN
           value: "dev-*,prod-*,d-*,h-*,p-*"
