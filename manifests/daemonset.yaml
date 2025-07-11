@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: k8s-log-backup
+  namespace: backup-jobs
+spec:
+  selector:
+    matchLabels:
+      app: k8s-log-backup
+  template:
+    metadata:
+      labels:
+        app: k8s-log-backup
+    spec:
+      serviceAccountName: log-backup-sa
+      containers:
+      - name: log-backup
+        image: evertonagilar/k8slogbck:latest
+        imagePullPolicy: IfNotPresent
+        # imagePullPolicy: Always
+        env:
+        - name: BACKUP_PATTERN
+          value: "dev-*,prod-*,d-*,h-*,p-*"
+        volumeMounts:
+        - name: log-path
+          mountPath: /var/log/pods
+        - name: backup-dest
+          mountPath: /backup
+      volumes:
+      - name: log-path
+        hostPath:
+          path: /var/log/pods
+          type: Directory
+      - name: backup-dest
+        hostPath:
+          path: /var/log/k8s-log-backup
+          type: DirectoryOrCreate
