@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
-
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -21,6 +21,7 @@ var (
 	backupPath    = "/backup"
 	patternList   = []string{}
 	removeAfterCp = false
+	archiveLock   sync.Mutex
 )
 
 const version = "1.0.0"
@@ -30,7 +31,7 @@ func main() {
 
 	if env := os.Getenv("BACKUP_PATTERN"); env != "" {
 		patternList = strings.Split(env, ",")
-		logInfo("🧭 BACKUP_PATTERN definido: %v", patternList)
+		logInfo("🧭 BACKUP_PATTERN: %v", patternList)
 	} else {
 		logWarn("🔄 BACKUP_PATTERN não definido. Usando '*' para todos os namespaces.")
 		patternList = []string{"*"}
@@ -69,7 +70,7 @@ func startPodInformer(clientset *kubernetes.Clientset, stopCh <-chan struct{}) {
 	informer := factory.Core().V1().Pods().Informer()
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(_, newObj interface{}) {
 			pod, ok := newObj.(*v1.Pod)
 			if !ok {
 				logWarn("❓ Objeto não é Pod.")
@@ -106,7 +107,8 @@ func startPodInformer(clientset *kubernetes.Clientset, stopCh <-chan struct{}) {
 
 func periodicArchive() {
 	for {
-		logInfo("♻️ Iniciando varredura periódica de logs antigos (*.gz)...")
+		archiveLock.Lock()
+		logInfo("🔄 Iniciando varredura periódica de logs antigos (*.gz)")
 		for _, pattern := range patternList {
 			globPath := filepath.Join(logBase, pattern+"_*")
 			matches, err := filepath.Glob(globPath)
@@ -146,26 +148,32 @@ func periodicArchive() {
 				}
 			}
 		}
+		archiveLock.Unlock()
 		time.Sleep(1 * time.Minute)
 	}
 }
 
 func archivePodLogsInformer(namespace, podName string) {
+	archiveLock.Lock()
+	defer archiveLock.Unlock()
+
 	globPattern := filepath.Join(logBase, fmt.Sprintf("%s_%s_*", namespace, podName))
 	matches, err := filepath.Glob(globPattern)
 	if err != nil || len(matches) == 0 {
-		logWarn("📁 Nenhum diretório encontrado para pod %s/%s", namespace, podName)
+		//logWarn("📁 Nenhum diretório encontrado para pod %s/%s", namespace, podName)
 		return
 	}
 
 	for _, podDir := range matches {
-		logInfo("📁 Verificando diretório: %s", podDir)
+		//logInfo("📁 Verificando diretório: %s", podDir)
 		err := filepath.Walk(podDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
-			logInfo("Arquivo detectado: %s", path)
 			if strings.HasSuffix(path, ".gz") || strings.HasSuffix(path, ".log") || strings.Contains(path, ".log.") {
+				if !isReadableAndNotEmpty(path) {
+					return nil
+				}
 				destDir := filepath.Join(backupPath, namespace, podName)
 				if err := os.MkdirAll(destDir, 0755); err != nil {
 					logWarn("⚠️ Não foi possível criar diretório %s: %v", destDir, err)
@@ -174,7 +182,8 @@ func archivePodLogsInformer(namespace, podName string) {
 				suffix := time.Now().Format("20060102-150405")
 				dst := filepath.Join(destDir, fmt.Sprintf("%s-%s", suffix, filepath.Base(path)))
 				if fileExists(dst) {
-					logWarn("⚠️ Arquivo já existente, ignorado: %s", dst)
+					// Como vai ser recebido vários eventos (Running, Success, Failed, Deleted), melhor não imprimir a mensagem
+					//logWarn("⚠️ Arquivo já existente, ignorado: %s", dst)
 					return nil
 				}
 				logInfo("📦 Copiando %s → %s", path, dst)
@@ -183,8 +192,6 @@ func archivePodLogsInformer(namespace, podName string) {
 					os.Remove(path)
 					logInfo("🗑️ Removido original: %s", path)
 				}
-			} else {
-				logInfo("Arquivo ignorado")
 			}
 			return nil
 		})
@@ -212,17 +219,14 @@ func fileOlderThan(path string, ageSec int) bool {
 
 func isReadableAndNotEmpty(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if info.Size() == 0 {
+	if err != nil || info.Size() == 0 {
 		return false
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		return false
 	}
-	file.Close()
+	defer file.Close()
 	return true
 }
 

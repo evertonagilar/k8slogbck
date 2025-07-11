@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: k8s-log-backup
-  namespace: backup-jobs
+  name: k8slogbck-agent
+  namespace: k8slogbck
 spec:
   selector:
     matchLabels:
-      app: k8s-log-backup
+      app: k8slogbck-agent
   template:
     metadata:
       labels:
-        app: k8s-log-backup
+        app: k8slogbck-agent
     spec:
-      serviceAccountName: log-backup-sa
+      serviceAccountName: k8slogbck-agent
       containers:
-      - name: log-backup
+      - name: k8slogbck-agent
         image: evertonagilar/k8slogbck:1.0.0
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         env:
         - name: BACKUP_PATTERN
           value: "dev-*,prod-*,d-*,h-*,p-*"
