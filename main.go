@@ -69,13 +69,27 @@ func startPodInformer(clientset *kubernetes.Clientset, stopCh <-chan struct{}) {
 	informer := factory.Core().V1().Pods().Informer()
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			pod, ok := newObj.(*v1.Pod)
+			if !ok {
+				logWarn("❓ Objeto não é Pod.")
+				return
+			}
+
+			if pod.DeletionTimestamp != nil {
+				logInfo("📦 Pod em finalização: %s/%s | Phase: %s", pod.Namespace, pod.Name, pod.Status.Phase)
+				if shouldArchive(pod.Namespace) {
+					go archivePodLogsInformer(pod.Namespace, pod.Name)
+				}
+			}
+		},
 		DeleteFunc: func(obj interface{}) {
 			pod, ok := obj.(*v1.Pod)
 			if !ok {
-				logWarn("❓ Objeto deletado não é um Pod.")
+				logWarn("❓ Objeto não é um Pod.")
 				return
 			}
-			logInfo("📦 Evento DELETED para pod: %s/%s", pod.Namespace, pod.Name)
+			logInfo("📦 Pod excluído: %s/%s", pod.Namespace, pod.Name)
 			if shouldArchive(pod.Namespace) {
 				go archivePodLogsInformer(pod.Namespace, pod.Name)
 			}
